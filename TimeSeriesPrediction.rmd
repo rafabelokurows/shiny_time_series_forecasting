@@ -1,0 +1,555 @@
+---
+title: "Nested Forecasting"
+output:
+    flexdashboard::flex_dashboard:
+        #orientation: rows
+        social: menu
+        source_code: embed
+        theme:
+            bg: "#FFFFFF"
+            fg: "black"
+            primary: "#18bc9c"
+            base_font: !expr bslib::font_google("Oswald")
+runtime: shiny
+---
+
+<!-- https://shiring.shinyapps.io/demo_dashboard_pred_maint_fast/#section-machine-learning -->
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+    echo    = FALSE,
+    message = FALSE,
+    warning = FALSE
+)
+
+library(shiny)
+library(shinyjs)
+library(plotly)
+library(reactable)
+library(reactablefmtr)
+library(shinyWidgets)
+library(shinythemes)
+library(flexdashboard)
+library(bslib)
+
+library(modeltime)
+library(tidymodels)
+
+library(tidyverse)
+library(timetk)
+
+
+```
+
+```{r}
+
+#best_models_tbl <- read_rds("artifacts/best_models_tbl.rds")
+best_models_tbl <- read_rds("./nested_refit.rds")
+indicator_options <- best_models_tbl$id %>% as.character()
+default_options <- indicator_options[1:3]
+```
+
+
+Introduction {data-icon="fa-comment-o" data-orientation="columns"}
+=======================================================================
+  
+  
+Column {data-width=250}
+-----------------------------------------------------------------------
+### Goals
+The main goal of this study is to predict weekly sales based on historical data and any other feature that may be available, training one Machine Learning model for each product.  
+
+To the right, you'll see the model with the best fit for each of the products selected on the filter to the left and how it fits to the last year of available data for each one.
+
+### Methods and tools
+10 ML models were trained to the 2 years of weekly sales for each product for a total of 70 predictive efforts.  
+
+- **Random Forest**
+- **ARIMA**
+- **Support Vector Machines**
+- **XGBoost**
+- **Prophet**
+
+R programming language with packages:  
+
+- **tidymodels** and **modeltime** for training and evaluating the models
+- **Shiny** for building dashboards
+
+  
+Column {data-width=750}
+-----------------------------------------------------------------------
+
+### Test Forecast
+
+```{r}
+output$plotly_2 <- renderPlotly({
+  
+    req(rv$forecast_tbl)
+    
+    facet_col <- 1
+    
+    if (length(input$products) > 3) facet_col <- 2
+    
+    if (length(input$products) > 8) facet_col <- 4
+    
+    rv$model_tbl %>%
+        extract_nested_test_forecast(.id_subset = input$products) %>%
+        group_by(id) %>%
+        plot_modeltime_forecast(
+            .facet_ncol = facet_col, 
+            .legend_max_width = 26, 
+            .plotly_slider = FALSE,
+            .title="Forecasts based on test sets"
+        )
+})
+
+plotlyOutput(outputId = "plotly_2")
+
+```
+
+
+
+
+Sidebar {.sidebar}
+=======================================================================
+Forecasting sales for products of your store.
+
+<hr>
+
+#### Filters
+
+```{r}
+useShinyjs(rmd = TRUE)
+    
+# shiny::selectInput(
+#     inputId   = "products",
+#     label     = "Select Products to Forecast",
+#     choices   = indicator_options,
+#     selected  = default_options,
+#     selectize = TRUE, 
+#     multiple  = TRUE
+# )
+
+pickerInput(
+                   inputId = "products",
+                   label = "Products",
+                   choices = indicator_options,
+                   selected = default_options,   
+                   options = list(`actions-box` = TRUE), 
+                   multiple = T
+                 )
+
+numericInput(
+    inputId = "forecast_horizon", 
+    label   = "Forecast Horizon (N)", 
+    value   = 52, 
+    min     = 2
+)
+
+shiny::sliderInput(
+    inputId = "conf_interval",
+    label   = "Confidence Interval",
+    min     = 0, 
+    max     = 1, 
+    value   = 0.95
+)
+    
+actionButton(inputId = "apply", label = "Apply", icon = icon("play"))
+
+actionButton(inputId = "reset", label = "Reset", icon = icon("sync"))
+
+
+observeEvent(eventExpr = input$reset, handlerExpr = {
+  
+    updateSelectInput(
+        session  = session, 
+        inputId  = "products",
+        selected = default_options
+    )
+    
+    updateNumericInput(
+        inputId = "forecast_horizon", 
+        value   = 52
+    )
+    
+    updateSliderInput(
+        session = session, 
+        inputId = "conf_interval",
+        value   = 0.95
+    )
+    
+  shinyjs::delay(ms = 300, expr = {
+      shinyjs::click(id = "apply")
+  })
+ 
+  
+})
+#__Learning Lab 63: Nested Forecasting.__
+
+```
+
+<hr>
+
+See more at this [Medium post](https://university.business-science.io/p/ds4b-102-r-shiny-web-application-business-level-1)
+
+---
+
+© Rafael Belokurows, 2022
+
+
+```{r}
+# LOGIC
+
+rv <- reactiveValues()
+
+observeEvent(input$apply, {
+    
+    rv$model_tbl <- best_models_tbl %>% filter(id %in% input$products)
+    
+    rv$forecast_tbl <- rv$model_tbl %>%
+        modeltime_nested_forecast(
+             h = input$forecast_horizon,
+             conf_interval = input$conf_interval,
+            control = control_nested_forecast(
+                verbose   = TRUE,
+                allow_par = FALSE
+            )
+        )
+    
+}, ignoreNULL = FALSE)
+```
+
+All Models {data-icon="fa-search" data-orientation="rows"}
+=======================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### All Models
+```{r}
+make_color_pal <- function(colors, bias = 1) {
+  get_color <- colorRamp(colors, bias = bias)
+  function(x) rgb(get_color(x), maxColorValue = 255)
+}
+
+good_color <- make_color_pal(rev(c("#ffffff", "#f2fbd2", "#c9ecb4", "#93d3ab", "#35b0ab")), bias = 2)
+best = best_models_tbl %>% 
+        extract_nested_test_accuracy() %>% 
+  #         group_by(id) %>% 
+  # slice_min(mape) %>% 
+          mutate_if(is.numeric,round,2) %>% 
+    select(-c(.model_id,.type,mase,rsq,smape))
+
+
+output$reactable_1 <- renderReactable({
+  
+  reactable(best,
+        searchable = TRUE,
+        resizable = TRUE,
+ # wrap = FALSE,
+  bordered = TRUE,
+        #filterable = TRUE,
+        highlight =T,
+        striped = T,
+  pagination = T,
+ defaultPageSize = 20,
+ compact=T,
+  #groupBy = "id",
+  columns = list(
+      mape = colDef(
+        name = "MAPE",
+        style = function(value) {
+          value
+          min = best %>%  group_by(id) %>%
+            filter(id == (best %>% filter(mape == value) %>% pull(id)))  %>%
+            summarize(min=min(mape,na.rm = T)) %>%     select(-1) %>% pull()
+          max = best %>%  group_by(id) %>%
+            filter(id == (best %>% filter(mape == value) %>% pull(id)))  %>%
+            summarize(max = max(mape,na.rm = T)) %>%     select(-1) %>% pull()
+          normalized <- (value - min) / (max - min)
+          color <- good_color(normalized)
+          list(background = color)
+        }
+      )
+      ,rmse = colDef(
+        name = "RMSE",
+        style = function(value) {
+          value
+          minrmse = best %>%  group_by(id) %>%
+            filter(id == (best %>% filter(rmse == value) %>% pull(id)))  %>%
+            summarize(min=min(rmse,na.rm = T)) %>%     select(-1) %>% pull()
+          maxrmse = best %>%  group_by(id) %>%
+            filter(id == (best %>% filter(rmse == value) %>% pull(id)))  %>%
+            summarize(max = max(rmse,na.rm = T)) %>%     select(-1) %>% pull()
+          normalized <- (value - minrmse) / (maxrmse - minrmse)
+          color <- good_color(normalized)
+          list(background = color)
+        }
+      ),
+      id = colDef(
+        name= "Product"
+      ),
+      mae = colDef(
+        name = "MAE"
+      ),
+      .model_desc = colDef(
+        name="Algorithm"
+      )
+      )
+  ) 
+  
+})
+reactableOutput("reactable_1")
+```
+
+
+Best Models {data-icon="fa-search" data-orientation="rows"}
+=======================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### Best Models
+```{r}
+sticky_style <- list(backgroundColor = "#f7f7f7")
+make_color_pal <- function(colors, bias = 1) {
+  get_color <- colorRamp(colors, bias = bias)
+  function(x) rgb(get_color(x), maxColorValue = 255)
+}
+good_color <- make_color_pal(rev(c("#ffffff", "#f2fbd2", "#c9ecb4", "#93d3ab", "#35b0ab")), bias = 2)
+best_of_the_best = best_models_tbl %>% 
+  #filter(id %in% input$products) %>% 
+        extract_nested_test_accuracy() %>% 
+          group_by(id) %>%
+  slice_min(mape) %>%
+          mutate_if(is.numeric,round,2) %>% 
+    select(-c(.model_id,.type,mase,rsq,smape))
+
+
+output$reactable_2 <- renderReactable({
+  
+  reactable(best_of_the_best,
+        searchable = TRUE,
+        resizable = TRUE,
+  wrap = FALSE,
+  bordered = TRUE,
+        #filterable = TRUE,
+  compact = T,
+  defaultPageSize = 20,
+        highlight =T,
+        striped = T,
+  pagination = T,
+  #groupBy = "id",
+   columns = list(
+      id = colDef(
+        name= "Product"
+      ),
+      mae = colDef(
+        name = "MAE"
+      ),
+      mape = colDef(
+        name = "MAPE"
+      ),
+      rmse = colDef(
+        name = "RMSE"
+      ),
+      .model_desc = colDef(
+        name="Algorithm"
+      )
+   )
+  
+  #     mape = colDef(
+  #      # style = function(value) {
+  #      #    value
+  #      #    normalized <- (value - min(best$mape)) / (max(best$mape) - min(best$mape))
+  #      #    color <- good_color(normalized)
+  #      #    list(background = color)
+  #      #  }
+  #       style = function(value) {
+  #         value
+  #         min = best %>%  group_by(id) %>%
+  #           filter(id == (best %>% filter(mape == value) %>% pull(id)))  %>%
+  #           summarize(min=min(mape,na.rm = T)) %>%     select(-1) %>% pull()
+  #         max = best %>%  group_by(id) %>%
+  #           filter(id == (best %>% filter(mape == value) %>% pull(id)))  %>%
+  #           summarize(max = max(mape,na.rm = T)) %>%     select(-1) %>% pull()
+  #         # minmape=as.numeric(teste[1])
+  #         # maxmape=as.numeric(teste[2])
+  #         normalized <- (value - min) / (max - min)
+  #         color <- good_color(normalized)
+  #         list(background = color)
+  #       }
+  #     )
+  #     # ,rmse = colDef(
+  #     #   #mape = "MAPE",
+  #     #   style = function(value) {
+  #     #     value
+  #     #     teste = best %>%  group_by(id) %>%
+  #     #       filter(id == (best %>% filter(rmse == value) %>% pull(id)))  %>%
+  #     #       summarize(min=min(rmse,na.rm = T),max = max(rmse,na.rm = T)) %>% select(-1)
+  #     #     minrmse=as.numeric(teste[1])
+  #     #     maxrmse=as.numeric(teste[2])
+  #     # 
+  #     #     normalized <- (value - minrmse) / (maxrmse - minrmse)
+  #     #     color <- good_color(normalized)
+  #     #     list(background = color)
+  #     #   }
+  #     # )
+  #     )
+  ) 
+  
+})
+reactableOutput("reactable_2")
+```
+
+Row
+-----------------------------------------------------------------------
+
+### Average all products {.value-box}
+
+```{r}
+meanmape = best %>%
+  group_by(id) %>%
+  summarize(melhor = min(mape)) %>%
+  summarize(mean(melhor))
+meanrmse = best %>%
+  group_by(id) %>%
+  summarize(melhor = min(rmse)) %>%
+  summarize(mean(melhor))
+renderValueBox({
+flexdashboard::valueBox(round(meanmape,2), icon = "fa-check-circle-o",  caption = "Mean Percentage error",color="primary")
+})
+```
+
+### Average all products {.value-box}
+```{r}
+renderValueBox({
+flexdashboard::valueBox(round(meanrmse,2), icon = "fa-check-circle", caption = "Mean Root Squared Error",color="primary")
+})
+
+```
+
+
+Individual Forecasts {data-icon="fa-search"}
+=======================================================================
+
+```{r}
+output$plotly_1 <- renderPlotly({
+  
+    req(rv$forecast_tbl)
+    
+    facet_col <- 1
+    
+    if (length(input$products) > 3) facet_col <- 2
+    
+    if (length(input$products) > 8) facet_col <- 4
+    
+    rv$forecast_tbl %>%
+        group_by(id) %>%
+        plot_modeltime_forecast(
+            .facet_ncol = facet_col, 
+            .legend_max_width = 26, 
+            .plotly_slider = FALSE,
+            .title=paste0("Forecasts predicted for the next ",input$forecast_horizon," periods")
+        )
+})
+
+plotlyOutput(outputId = "plotly_1")
+```
+
+Overall Forecasts {data-icon="fa-search" data-orientation="rows"}
+=======================================================================
+
+
+Row {data-height=400}
+-----------------------------------------------------------------------
+
+
+### Weekly Forecasts
+```{r}
+output$reactable_3 <- renderReactable({
+  grouped = rv$forecast_tbl %>% group_by(.index) %>% summarize(.value = sum(.value),
+                                             .conf_lo = sum(.conf_lo,na.rm = T),
+                                             .conf_hi = sum(.conf_hi,na.rm = T)) %>% 
+       mutate(.key = ifelse(.index < "2012-11-02","actual","prediction"))  %>% 
+    mutate_if(is.numeric,round,2)
+  
+  
+  reactable(grouped %>% filter(.key == "prediction") %>% select(-c(.key)),
+        #searchable = TRUE,
+        resizable = TRUE,
+  wrap = FALSE,
+  bordered = TRUE,
+        #filterable = TRUE,
+        highlight =T,
+        striped = T,
+  pagination = T,
+  compact=T,
+  #groupBy = "id",
+  columns = list(
+  .index = colDef(name = "Week"),
+  .value = colDef(name = "Amount",format = colFormat(currency="USD",digits = 2)),
+  
+  .conf_lo = colDef(name = paste0("Lower value at  ",input$conf_interval," confidence")),
+  .conf_hi = colDef(name = paste0("Higher value at  ",input$conf_interval," confidence"))
+  ) 
+)
+})
+reactableOutput("reactable_3")
+#https://glin.github.io/reactable/articles/examples.html#filtering
+
+```
+
+Row {data-height=600}
+-----------------------------------------------------------------------
+
+
+```{r}
+output$plotly_3 <- renderPlotly({
+  
+    req(rv$forecast_tbl)
+
+    facet_col <- 1
+
+    if (length(input$products) > 3) facet_col <- 2
+
+    if (length(input$products) > 8) facet_col <- 4
+    grouped = rv$forecast_tbl %>% group_by(.index) %>% summarize(.value = sum(.value),
+                                             .conf_lo = sum(.conf_lo,na.rm = T),
+                                             .conf_hi = sum(.conf_hi,na.rm = T)) %>% 
+       mutate(.key = ifelse(.index < "2012-11-02","actual","future")) 
+    
+    grouped %>% 
+       timetk::plot_time_series(.date_var = .index, .value =.value,
+                               .legend_show = T,.smooth = T,
+                               .color_var = .key,
+                               
+                               .title=paste("Total sales amount for",length(input$products),"products"),
+                               .y_lab="Total sales")
+    
+})
+
+plotlyOutput(outputId = "plotly_3")
+# output$reactable_3 <- renderReactable({
+#   grouped = rv$forecast_tbl %>% group_by(.index) %>% summarize(.value = sum(.value),
+#                                              .conf_lo = sum(.conf_lo,na.rm = T),
+#                                              .conf_hi = sum(.conf_hi,na.rm = T)) %>% 
+#        mutate(.key = ifelse(.index < "2012-11-02","actual","prediction")) 
+#   reactable(grouped %>% filter(.key == "prediction") %>% select(-c(.key)),
+#         searchable = TRUE,
+#         resizable = TRUE,
+#   wrap = FALSE,
+#   bordered = TRUE,
+#         #filterable = TRUE,
+#         highlight =T,
+#         striped = T,
+#   pagination = T,
+#   #groupBy = "id",
+#   columns = list(
+#   .value = colDef(format = colFormat(prefix = "$", separators = TRUE, digits = 2))
+#   )
+#   ) 
+#   
+# })
+# reactableOutput("reactable_3")
+
+```
