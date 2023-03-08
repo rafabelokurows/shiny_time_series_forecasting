@@ -1,4 +1,4 @@
-# Time Series Multiple Forecasting Shiny App
+# Multiple Time Series Forecasting Shiny App
 
 <img src="https://github.com/rafabelokurows/TimeSeriesForecastingApp/blob/master/forecasting.png">
 
