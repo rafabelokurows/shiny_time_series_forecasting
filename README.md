@@ -7,13 +7,12 @@
 * [General Info](#general-information)
 * [Technologies Used](#technologies-used)
 * [Features](#features)
-<!--* [Screenshots](#screenshots)-->
-* [Setup](#setup)
 * [Usage](#usage)
 * [Project Status](#project-status)
 * [Room for Improvement](#room-for-improvement)
 * [Contact](#contact)
-
+<!--* [Screenshots](#screenshots)-->
+<!--* [Setup](#setup)-->
 ## General Information
 Training several methods on multiple time series at once using R
 
@@ -31,11 +30,12 @@ List the ready features here:
 
 <!--## Screenshots
 <>![Example screenshot](./img/screenshot.png) -->
-## Setup
-.rds files contain data, .Rmd contains code for Shiny app
-
 ## Usage
-Place .rds and .Rmd files within the same folder and run .Rmd once you have all packages installed.
+* .rds files contain data
+* .Rmd contains code for Shiny app
+  
+1. Place .rds and .Rmd files within the same folder
+2. Run .Rmd once you have all packages installed.
 
 ## Project Status
 _no longer being worked on_: on the to-do list for improvement
